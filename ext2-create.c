@@ -283,26 +283,64 @@ void write_block_bitmap(int fd) {
     if (off == -1) {
         errno_exit("lseek");
     }
-    unsigned char bitmap[1024] = {0};
-    unsigned char *bitmapbuf;
-    bitmapbuf = malloc(BLOCK_SIZE);
-    
-    for(int i =0, i<24; i++)
+
+    u8 bbitmap[1024] = {0};
+    for(int i =0; i<3; i++)
     {
-        bitmap[i] = 1;
+        bbitmap[i] = 0xFF;
     }
-    if ( write(fd,bitmapbuf,1024) != 1024)
+
+    bbitmap[2]=0x7f;//little endian is 01111111
+    for (int i =3; i<128;i++)
+    {
+	    bbitmap[i] = 0;
+    }
+    bbitmap[127]=0x80;
+    for(int i =128; i<1024; i++)
+    {
+	    bbitmap[i] = 0xFF; //free but unavailable to our file system 
+    }
+    if ( write(fd,bbitmap,BLOCK_SIZE) != BLOCK_SIZE)
     {
         errno_exit("write");
     }
 
-    
+
 }
 
 void write_inode_bitmap(int fd) {
 	/* This is all you */
-    
-    
+     off_t off = lseek(fd, BLOCK_OFFSET(4), SEEK_SET);
+    if (off == -1) {
+        errno_exit("lseek");
+    }
+
+    u8 ibitmap[1024] = {0};
+
+   // ssize_t size = sizeof(ibitmap);
+ 
+    ibitmap[0] = 0xff;
+    ibitmap[1] = 0x1f;
+
+    for(int i =2; i<16; i++)
+    {
+        ibitmap[i] = 0x0;
+    }
+
+    for (int i =16; i<1024;i++)
+    {
+            ibitmap[i] = 0xff;
+    }
+
+    /*for(int i =5; i<128; i++)
+    {
+            ibitmap[i] = 0xFF; //free but unavailable to our file system 
+    }*/
+    if ( write(fd,ibitmap,BLOCK_SIZE) != BLOCK_SIZE)
+    {
+        errno_exit("write");
+    }
+
 }
 
 void write_inode(int fd, u32 index, struct ext2_inode *inode) {
@@ -345,15 +383,115 @@ void write_inode_table(int fd) {
 
 	/* You should add your 3 other inodes in this function and delete this
 	   comment */
-    
+
+	struct ext2_inode hello_world = {0};
+ 	hello_world.i_mode = EXT2_S_IFREG
+                                      | EXT2_S_IRUSR
+                                      | EXT2_S_IWUSR
+                                      | EXT2_S_IRGRP
+                                      | EXT2_S_IROTH;
+        hello_world.i_uid = 1000;
+        hello_world.i_size = 12;
+        hello_world.i_atime = current_time;
+        hello_world.i_ctime = current_time;
+        hello_world.i_mtime = current_time;
+        hello_world.i_dtime = 0;
+        hello_world.i_gid = 1000;
+        hello_world.i_links_count = 1;
+        hello_world.i_blocks = 2;//?? why not one 
+        hello_world.i_block[0] = HELLO_WORLD_FILE_BLOCKNO;
+        write_inode(fd, HELLO_WORLD_INO, &hello_world);
+
+  	struct ext2_inode hello = {0};
+        hello.i_mode = EXT2_S_IFLNK
+                                      | EXT2_S_IRUSR
+                                      | EXT2_S_IWUSR
+                                      | EXT2_S_IRGRP
+                                      | EXT2_S_IROTH;
+        hello.i_uid = 1000;
+        hello.i_size = 11;
+        hello.i_atime = current_time;
+        hello.i_ctime = current_time;
+        hello.i_mtime = current_time;
+        hello.i_dtime = 0;
+        hello.i_gid = 1000;
+        hello.i_links_count = 1;
+        hello.i_blocks = 0;
+        /*hello.i_block[0] = "/hel";//unsure of this
+	hello.i_block[1] = "lo-w";
+	hello.i_block[2]="orld";*/
+	memcpy(hello.i_block, "hello-world", 11);
+        write_inode(fd, HELLO_INO, &hello);
+
+
+
+ 	struct ext2_inode root_inode = {0};
+        root_inode.i_mode = EXT2_S_IFDIR
+                                      | EXT2_S_IRUSR
+                                      | EXT2_S_IWUSR
+                                      | EXT2_S_IXUSR
+                                      | EXT2_S_IRGRP
+                                      | EXT2_S_IXGRP
+                                      | EXT2_S_IROTH
+                                      | EXT2_S_IXOTH;
+        root_inode.i_uid = 0;
+        root_inode.i_size = 1024;
+        root_inode.i_atime = current_time;
+        root_inode.i_ctime = current_time;
+        root_inode.i_mtime = current_time;
+        root_inode.i_dtime = 0;
+        root_inode.i_gid = 0;
+        root_inode.i_links_count = 3;
+        root_inode.i_blocks = 2; 
+        root_inode.i_block[0] = ROOT_DIR_BLOCKNO;
+        write_inode(fd, EXT2_ROOT_INO, &root_inode); 
     
     
 }
 
 void write_root_dir_block(int fd) {
 	/* This is all you */
-    
-    
+	off_t off = BLOCK_OFFSET(ROOT_DIR_BLOCKNO);
+        off = lseek(fd, off, SEEK_SET);
+        if (off == -1) {
+                errno_exit("lseek");
+        }
+	
+	ssize_t bytes_remaining = BLOCK_SIZE;
+
+        struct ext2_dir_entry current_entry = {0};
+        dir_entry_set(current_entry, EXT2_ROOT_INO, ".");
+        dir_entry_write(current_entry, fd);
+
+        bytes_remaining -= current_entry.rec_len;
+
+        struct ext2_dir_entry parent_entry = {0};
+        dir_entry_set(parent_entry, EXT2_ROOT_INO, "..");
+        dir_entry_write(parent_entry, fd);
+
+        bytes_remaining -= parent_entry.rec_len;
+
+        struct ext2_dir_entry hw_entry = {0};
+	dir_entry_set(hw_entry,HELLO_WORLD_INO,"hello-world");
+	dir_entry_write(hw_entry,fd);
+	
+	bytes_remaining -= hw_entry.rec_len;
+
+	struct ext2_dir_entry lf_entry = {0};
+	dir_entry_set(lf_entry,LOST_AND_FOUND_INO,"lost+found");
+        dir_entry_write(lf_entry,fd);
+        
+        bytes_remaining -= lf_entry.rec_len;
+
+	struct ext2_dir_entry hello_entry = {0};
+     	dir_entry_set(hello_entry,HELLO_INO,"hello");//how to show symlink? literally with arrow 
+        dir_entry_write(hello_entry,fd);
+        
+        bytes_remaining -= hello_entry.rec_len;
+
+   	struct ext2_dir_entry fill_entry = {0};
+        fill_entry.rec_len = bytes_remaining;
+        dir_entry_write(fill_entry, fd); 
     
 }
 
@@ -385,7 +523,17 @@ void write_lost_and_found_dir_block(int fd) {
 
 void write_hello_world_file_block(int fd) {
 	/* This is all you */
-    
+     off_t off = BLOCK_OFFSET(HELLO_WORLD_FILE_BLOCKNO);
+        off = lseek(fd, off, SEEK_SET);
+        if (off == -1) {
+                errno_exit("lseek");
+        }
+	if (write(fd,"Hello world\n", 12) != 12)
+	{
+		errno_exit("write");
+	}
+
+
     
     
 }
